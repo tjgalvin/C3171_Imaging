@@ -10,8 +10,10 @@ class uv():
     initially
     """
     def __init__(self, uv: str):
-        """Initialise the container
-        
+        """Initialise the container.
+        NOTE: This signature may change. Will also have to be
+              updated in self.selfcal()
+        .
         Arguments:
             uv {str} -- The name of the uv-file to image
         """
@@ -114,6 +116,40 @@ class uv():
 
         self.img_tasks['convol'] = convol
 
+
+    def attempt_selfcal(self):
+        """Logic to decide whether selcalibration should be attempted
+
+        Is a stub for the moment. In time will look at items in the restor/linmos
+        file to see is strong sources/flux are available. 
+        """
+        return True
+
+
+    def selfcal(self, round: int=0):
+        """Apply a round of selfcalibration to the uv-file if appropriate.
+        
+        Keyword Arguments:
+            round {int} -- The selfcalibration round the process is up to (default: {0})
+        """
+        run_self = self.attempt_selfcal()
+        
+        # Conditions are not met. Return instance of self.
+        if not run_self:
+            return self
+
+        # Apply calibration tables in existing uv-file
+        uvaver = m(f"uvaver vis={self.uv} out={self.uv}.{round}").run()
+        print(uvaver)
+
+        # Derive selfcalibrated solutions
+        # TODO: Discuss changes to interval and nfbins, especially with two IFS
+        # TODO: in the uvcat'ed uvfiles. 
+        selfcal = m(f"selfcal vis={uvaver.out} model={self.img_tasks['mfclean'].out}"\
+                    f"options=mfs,phase interval=0.1 nfbin=4").run()
+        print(selfcal)
+
+        return uv(selfcal.out)
 
 def delete_miriad(f:str):
     """Delete a folder if it exists
