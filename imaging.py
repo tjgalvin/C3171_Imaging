@@ -70,13 +70,18 @@ class uv():
         """Create the miriad images
         """
 
-        invert = m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
+        # No work to do, as data has been imaged
+        if 'restor' in self.img_tasks.keys():
+            return
+
+        print(self.uv)
+        invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
                    f"offset=3:32:22.0,-27:48:37 stokes=i imsize=5,5,beam " \
                    f"map={self.uv}.map beam={self.uv}.beam").run()
         print(invert)
 
         stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
-                      f"offset=3:32:22.0,-27:48:37 stokes=v imsize=3,3,beam " \
+                      f"offset=3:32:22.0,-27:48:37 stokes=v imsize=2,2,beam " \
                       f"map={self.uv}.v.map").run()
         print(stokes_v)
 
@@ -87,7 +92,7 @@ class uv():
                 v_rms = float(l.split()[-1])
 
         mfclean = m(f"mfclean map={invert.map} beam={invert.beam} out={self.uv}.clean "\
-                    f"region='perc(66)' niters=500 cutoff={5*v_rms}").run()
+                    f"region='perc(66)' niters=50 cutoff={5*v_rms}").run()
         print(mfclean)
 
         restor = m(f"restor map={invert.map} beam={invert.beam} model={mfclean.out} "\
@@ -106,6 +111,12 @@ class uv():
             bmin {float} -- Beam minor in arcseconds
             pa {float} -- Beam position angle in degrees
         """
+
+        # TODO: Implement check to ensure that image has not already created
+        #       by looking to see if self.img_tasks is not empty. If they are
+        #       not empty, then the self.attempt_selfcal() returned an instance
+        #       to an existing image
+
         if 'restor' not in self.img_tasks.keys():
             return None
 
@@ -145,11 +156,12 @@ class uv():
         # Derive selfcalibrated solutions
         # TODO: Discuss changes to interval and nfbins, especially with two IFS
         # TODO: in the uvcat'ed uvfiles. 
-        selfcal = m(f"selfcal vis={uvaver.out} model={self.img_tasks['mfclean'].out}"\
+        selfcal = m(f"selfcal vis={uvaver.out} model={self.img_tasks['mfclean'].out} "\
                     f"options=mfs,phase interval=0.1 nfbin=4").run()
         print(selfcal)
 
-        return uv(selfcal.out)
+        return uv(uvaver.out)
+
 
 def delete_miriad(f:str):
     """Delete a folder if it exists
@@ -163,16 +175,16 @@ def delete_miriad(f:str):
 
 
 @dask.delayed
-def run_linmos(imgs: list, round:int =0):
+def run_linmos(mos: list, round: int=0):
     """The the miriad task linmos agaisnt list of uv files
     
     Arguments:
-        imgs {list} -- A list of uv-instances
+        mos {list} -- A list of uv-instances
         round {int} -- A int for self calibration round
     """
     convol_files = f'temp_file_{round}.dat'
     with open(f"{convol_files}", 'w') as f:
-        for i in imgs:
+        for i in mos:
             print(f"{i.img_tasks['convol'].out}", file=f)
 
     out = f"all_days.{round}.linmos"
@@ -192,23 +204,64 @@ def run_image(s: str):
     Arguments:
         s {str} -- path to uv-file
     """
-    point = uv(s)
+    if isinstance(s, str):
+        point = uv(s)
+    else:
+        point = s
+
     point.image()
     point.convol(7., 3., 2.2)    
 
     return point
+
+
+@dask.delayed
+def run_selfcal(s: uv, round: int):
+    """Run the attempt_selfcal method
+    
+    Arguments:
+        s {uv} -- uv file to self calibrate
+        round {int} -- the selfcalibration round
+    """
+    scs = s.selfcal(round=round)
+    print(scs.uv)
+    return scs
+
+@dask.delayed
+def dask_reduce(arr):
+    """Reduce the worker graph
+    
+    Arguments:
+        arr {list} -- Reduce the Dask graph
+    """
+    return arr
+
 
 if __name__ == '__main__':
     files = ['c3171_99.uv', 'c3171_100.uv','c3171_101.uv', 'c3171_102.uv']
 
     # clean up existing images for testing
     for test in files:
-        for i in ['map', 'beam', 'clean', 'restor', 'v.map', 'convol']:
-            f = f"{test}.{i}"
-            delete_miriad(f)
+        for c in [0, 1]:
+            for i in ['map', 'beam', 'clean', 'restor', 'v.map', 'convol']:
+                if c == 0:
+                    f = f"{test}.{i}"
+                else:
+                    delete_miriad(f"{test}.{c}")
+                    f = f"{test}.{c}.{i}"
+                delete_miriad(f)
 
+
+    # Example code to get to run with Dask framework
     imgs = [run_image(f) for f in files]
-    run_linmos(imgs).compute()
+    e1 = run_linmos(imgs, 0)
+
+    self_imgs = [run_selfcal(uv,1) for uv in imgs]
+    self_imgs = [run_image(uv) for uv in self_imgs]
+    e2 = run_linmos(self_imgs, 1)
+
+    dask_reduce([e1, e2]).visualize('graph.png')
+    dask_reduce([e1, e2]).compute()
 
     # import pickle
     # print(pickle.dumps(c100))
