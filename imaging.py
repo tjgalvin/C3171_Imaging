@@ -76,7 +76,7 @@ class uv():
 
         print(self.uv)
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
-                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=5,5,beam " \
+                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=6,6,beam " \
                    f"map={self.uv}.map beam={self.uv}.beam").run()
         print(invert)
 
@@ -112,12 +112,8 @@ class uv():
             pa {float} -- Beam position angle in degrees
         """
 
-        # TODO: Implement check to ensure that image has not already created
-        #       by looking to see if self.img_tasks is not empty. If they are
-        #       not empty, then the self.attempt_selfcal() returned an instance
-        #       to an existing image
-
-        if 'restor' not in self.img_tasks.keys():
+        if 'restor' not in self.img_tasks.keys() or \
+                    'convol' in self.img_tasks.keys():
             return None
 
         restor = self.img_tasks['restor']
@@ -134,6 +130,11 @@ class uv():
         Is a stub for the moment. In time will look at items in the restor/linmos
         file to see is strong sources/flux are available. 
         """
+        # return True
+
+        if '100' in self.uv:
+            return False
+
         return True
 
 
@@ -223,9 +224,7 @@ def run_selfcal(s: uv, round: int):
         s {uv} -- uv file to self calibrate
         round {int} -- the selfcalibration round
     """
-    scs = s.selfcal(round=round)
-    print(scs.uv)
-    return scs
+    return s.selfcal(round=round)
 
 @dask.delayed
 def dask_reduce(arr):
