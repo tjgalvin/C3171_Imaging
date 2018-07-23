@@ -66,8 +66,11 @@ class uv():
         return src_data
 
 
-    def image(self):
-        """Create the miriad images
+    def image(self, invert_kwargs: dict=None):
+        """A simple MFCLEAN imaging pipeline
+        
+        Keyword Arguments:
+            invert_kwargs {dict} -- Options to pass to the invert map/beam stage (default: {None})
         """
 
         # No work to do, as data has been imaged
@@ -77,7 +80,7 @@ class uv():
         print(self.uv)
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
                    f"offset=3:32:22.0,-27:48:37 stokes=i imsize=6,6,beam " \
-                   f"map={self.uv}.map beam={self.uv}.beam").run()
+                   f"map={self.uv}.map beam={self.uv}.beam", over=invert_kwargs).run()
         print(invert)
 
         stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
@@ -200,18 +203,19 @@ def run_linmos(mos: list, round: int=0):
 
 
 @dask.delayed
-def run_image(s: str):
+def run_image(s: str, invert_kwargs: dict= None):
     """Function to Dask-ify for distribution
     
     Arguments:
         s {str} -- path to uv-file
+        invert_kwargs {dict} -- invert options
     """
     if isinstance(s, str):
         point = uv(s)
     else:
         point = s
 
-    point.image()
+    point.image(invert_kwargs=invert_kwargs)
     point.convol(7., 3., 2.2)    
 
     return point
@@ -253,7 +257,7 @@ if __name__ == '__main__':
 
 
     # Example code to get to run with Dask framework
-    imgs = [run_image(f) for f in files]
+    imgs = [run_image(f, invert_kwargs={'imsize':'2,2,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
 
     self_imgs = [run_selfcal(uv,1) for uv in imgs]
