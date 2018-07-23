@@ -130,12 +130,13 @@ class uv():
         Is a stub for the moment. In time will look at items in the restor/linmos
         file to see is strong sources/flux are available. 
         """
-        # return True
-
-        if '100' in self.uv:
-            return False
-
         return True
+
+        # Example of conditional. Used to test subequent imaging
+        # if '100' in self.uv:
+        #     return False
+
+        # return True
 
 
     def selfcal(self, round: int=0):
