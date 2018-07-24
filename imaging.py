@@ -79,7 +79,7 @@ class uv():
 
         print(self.uv)
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
-                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=6,6,beam " \
+                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=4,4,beam " \
                    f"map={self.uv}.map beam={self.uv}.beam", over=invert_kwargs).run()
         print(invert)
 
@@ -103,7 +103,7 @@ class uv():
         print(restor)
 
         self.img_tasks = {'invert':invert, 'invert_v':stokes_v, 'mfclean':mfclean,
-                          'restor':restor}
+                          'restor':restor, 'stokes_v_rms':v_rms}
 
 
     def convol(self, bmaj: float, bmin: float, pa: float):
@@ -127,29 +127,63 @@ class uv():
         self.img_tasks['convol'] = convol
 
 
-    def attempt_selfcal(self):
+    def attempt_selfcal(self, mode: str=None):
         """Logic to decide whether selcalibration should be attempted
 
         Is a stub for the moment. In time will look at items in the restor/linmos
-        file to see is strong sources/flux are available. 
+        file to see is strong sources/flux are available. `mode` could even be a 
+        function passed in defined outside of the `uv` class. 
+        
+        TODO: Add check to see if `mode` is callable to support user-defined functions
+        
+        Keyword Arguments:
+            mode {str} -- The mode used to evaluate decision to self (default: {None})
+        
+        Returns:
+            bool -- Whether selfcal should be used
+            dict -- optional return with selfcal key/values to use
         """
+
+        # Nothing set
+        if mode is None:
+            return True
+
+        elif mode == 'test':
+            # Example of conditional. Used to test subequent imaging
+            if '100' in self.uv:
+                return False
+
+        elif mode == 'restor_max':
+            from astropy.io import fits as pyfits
+            restor = self.img_tasks['restor']
+            fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+                      "region='images(1,1)'").run()
+            data = pyfits.open(fits.out)[0].data.squeeze()
+            delete_miriad(fits.out)
+
+            restor_max = data.max()
+            if restor_max > 150*self.img_tasks['stokes_v_rms']:
+                return True, {'options':'mfs,amp'}
+            elif restor_max > 50*self.img_tasks['stokes_v_rms']:
+                return True
+            else:
+                return False
+
         return True
 
-        # Example of conditional. Used to test subequent imaging
-        # if '100' in self.uv:
-        #     return False
 
-        # return True
-
-
-    def selfcal(self, round: int=0):
+    def selfcal(self, *args, round: int=0, self_kwargs: dict=None, **kwargs):
         """Apply a round of selfcalibration to the uv-file if appropriate.
         
         Keyword Arguments:
             round {int} -- The selfcalibration round the process is up to (default: {0})
+            self_kwargs {dict} -- Options for selfcalibration. Can be overwritten by attempt_selfcal returns (default: {None})
         """
-        run_self = self.attempt_selfcal()
+        run_self = self.attempt_selfcal(**kwargs)
         
+        if isinstance(run_self, tuple):
+            run_self, self_kwargs = run_self
+
         # Conditions are not met. Return instance of self.
         if not run_self:
             return self
@@ -162,9 +196,10 @@ class uv():
         # TODO: Discuss changes to interval and nfbins, especially with two IFS
         # TODO: in the uvcat'ed uvfiles. 
         selfcal = m(f"selfcal vis={uvaver.out} model={self.img_tasks['mfclean'].out} "\
-                    f"options=mfs,phase interval=0.1 nfbin=4").run()
+                    f"options=mfs,phase interval=0.1 nfbin=4", over=self_kwargs).run()
         print(selfcal)
 
+        # Return new instance to selfcaled file
         return uv(uvaver.out)
 
 
@@ -175,9 +210,12 @@ def delete_miriad(f:str):
         f {str} -- Folder to delete
     """
     if os.path.exists(f):
-        print(f"Removing {f}")
-        shutil.rmtree(f)
-
+        if os.path.isdir(f):
+            print(f"Removing directory {f}")
+            shutil.rmtree(f)
+        else:
+            print(f"Removing file {f}")
+            os.remove(f)
 
 @dask.delayed
 def run_linmos(mos: list, round: int=0):
@@ -222,14 +260,14 @@ def run_image(s: str, invert_kwargs: dict= None):
 
 
 @dask.delayed
-def run_selfcal(s: uv, round: int):
+def run_selfcal(s: uv, round: int, *args, **kwargs):
     """Run the attempt_selfcal method
     
     Arguments:
         s {uv} -- uv file to self calibrate
         round {int} -- the selfcalibration round
     """
-    return s.selfcal(round=round)
+    return s.selfcal(round=round, **kwargs)
 
 @dask.delayed
 def dask_reduce(arr):
@@ -247,7 +285,7 @@ if __name__ == '__main__':
     # clean up existing images for testing
     for test in files:
         for c in [0, 1]:
-            for i in ['map', 'beam', 'clean', 'restor', 'v.map', 'convol']:
+            for i in ['map', 'beam', 'clean', 'restor', 'v.map', 'convol', 'restor.fits']:
                 if c == 0:
                     f = f"{test}.{i}"
                 else:
@@ -257,10 +295,10 @@ if __name__ == '__main__':
 
 
     # Example code to get to run with Dask framework
-    imgs = [run_image(f, invert_kwargs={'imsize':'2,2,beam'}) for f in files]
+    imgs = [run_image(f, invert_kwargs={'imsize':'4,4,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
 
-    self_imgs = [run_selfcal(uv,1) for uv in imgs]
+    self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
     self_imgs = [run_image(uv) for uv in self_imgs]
     e2 = run_linmos(self_imgs, 1)
 
