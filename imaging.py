@@ -80,7 +80,8 @@ class uv():
         print(self.uv)
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
                    f"offset=3:32:22.0,-27:48:37 stokes=i imsize=4,4,beam " \
-                   f"map={self.uv}.map beam={self.uv}.beam", over=invert_kwargs).run()
+                   f"map={self.uv}.map beam={self.uv}.beam robust=2", 
+                    over=invert_kwargs).run()
         print(invert)
 
         stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
@@ -130,10 +131,6 @@ class uv():
     def attempt_selfcal(self, mode: str=None):
         """Logic to decide whether selcalibration should be attempted
 
-        Is a stub for the moment. In time will look at items in the restor/linmos
-        file to see is strong sources/flux are available. `mode` could even be a 
-        function passed in defined outside of the `uv` class. 
-        
         TODO: Add check to see if `mode` is callable to support user-defined functions
         
         Keyword Arguments:
@@ -172,7 +169,7 @@ class uv():
 
         elif mode == 'clean_sum':
             from astropy.io import fits as pyfits
-            clean = self.img_tasks['clean']
+            clean = self.img_tasks['mfclean']
             fits = m(f"fits in={clean.out} out={clean.out}.fits op=xyout " \
                       "region='images(1,1)'").run()
             data = pyfits.open(fits.out)[0].data.squeeze()
@@ -301,6 +298,9 @@ if __name__ == '__main__':
               'c3171_99.uv', 'c3171_100.uv','c3171_101.uv', 'c3171_102.uv',
              'c3171_103.uv', 'c3171_104.uv','c3171_105.uv', 'c3171_106.uv']
 
+    from glob import glob
+    files = glob("*.uv")
+
     # clean up existing images for testing
     for test in files:
         for c in [0, 1]:
@@ -317,8 +317,8 @@ if __name__ == '__main__':
     imgs = [run_image(f, invert_kwargs={'imsize':'4,4,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
 
-    # self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
-    self_imgs = [run_selfcal(uv,1, mode='clean_sum') for uv in imgs]
+    self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
+    # self_imgs = [run_selfcal(uv,1, mode='clean_sum') for uv in imgs]
     self_imgs = [run_image(uv) for uv in self_imgs]
     e2 = run_linmos(self_imgs, 1)
 
