@@ -95,7 +95,7 @@ class uv():
                 v_rms = float(l.split()[-1])
 
         mfclean = m(f"mfclean map={invert.map} beam={invert.beam} out={self.uv}.clean "\
-                    f"region='perc(66)' niters=50 cutoff={5*v_rms}").run()
+                    f"region='perc(66)' niters=1500 cutoff={5*v_rms}").run()
         print(mfclean)
 
         restor = m(f"restor map={invert.map} beam={invert.beam} model={mfclean.out} "\
@@ -161,6 +161,7 @@ class uv():
             data = pyfits.open(fits.out)[0].data.squeeze()
             delete_miriad(fits.out)
 
+            # Threshold selected by dumb luck and subsequet experimentation
             restor_max = data.max()
             if restor_max > 150*self.img_tasks['stokes_v_rms']:
                 return True, {'options':'mfs,amp'}
@@ -168,6 +169,22 @@ class uv():
                 return True
             else:
                 return False
+
+        elif mode == 'clean_sum':
+            from astropy.io import fits as pyfits
+            clean = self.img_tasks['clean']
+            fits = m(f"fits in={clean.out} out={clean.out}.fits op=xyout " \
+                      "region='images(1,1)'").run()
+            data = pyfits.open(fits.out)[0].data.squeeze()
+            delete_miriad(fits.out)
+
+            clean_sum = data.sum()
+            if clean_sum > 500*self.img_tasks['stokes_v_rms']:
+                return True, {'options':'mfs,amp'}
+            elif clean_sum > 100*self.img_tasks['stokes_v_rms']:
+                return True
+            else:
+                return False 
 
         return True
 
@@ -280,7 +297,9 @@ def dask_reduce(arr):
 
 
 if __name__ == '__main__':
-    files = ['c3171_99.uv', 'c3171_100.uv','c3171_101.uv', 'c3171_102.uv']
+    files = [ 'c3171_95.uv', 'c3171_96.uv',  'c3171_97.uv',  'c3171_98.uv',
+              'c3171_99.uv', 'c3171_100.uv','c3171_101.uv', 'c3171_102.uv',
+             'c3171_103.uv', 'c3171_104.uv','c3171_105.uv', 'c3171_106.uv']
 
     # clean up existing images for testing
     for test in files:
@@ -298,7 +317,8 @@ if __name__ == '__main__':
     imgs = [run_image(f, invert_kwargs={'imsize':'4,4,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
 
-    self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
+    # self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
+    self_imgs = [run_selfcal(uv,1, mode='clean_sum') for uv in imgs]
     self_imgs = [run_image(uv) for uv in self_imgs]
     e2 = run_linmos(self_imgs, 1)
 
