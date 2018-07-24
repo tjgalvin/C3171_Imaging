@@ -80,13 +80,13 @@ class uv():
         print(self.uv)
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
                    f"offset=3:32:22.0,-27:48:37 stokes=i imsize=4,4,beam " \
-                   f"map={self.uv}.map beam={self.uv}.beam robust=2", 
+                   f"map={self.uv}.map beam={self.uv}.beam robust=2 cell=0.35", 
                     over=invert_kwargs).run()
         print(invert)
 
         stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
                       f"offset=3:32:22.0,-27:48:37 stokes=v imsize=2,2,beam " \
-                      f"map={self.uv}.v.map").run()
+                      f"map={self.uv}.v.map cell=0.35").run()
         print(stokes_v)
 
         sigest = m(f"sigest in={stokes_v.map}").run()
