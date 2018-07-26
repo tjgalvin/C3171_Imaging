@@ -129,10 +129,10 @@ class uv():
 
 
     def attempt_selfcal(self, mode: str=None):
-        """Logic to decide whether selcalibration should be attempted
+        """Logic to decide whether selcalibration should be attempted. Mode can be
+        a function that is passed into the method. It should except as a single 
+        argument a reference to uv-instance. 
 
-        TODO: Add check to see if `mode` is callable to support user-defined functions
-        
         Keyword Arguments:
             mode {str} -- The mode used to evaluate decision to self (default: {None})
         
@@ -145,7 +145,13 @@ class uv():
         if mode is None:
             return True
 
-        elif mode == 'test':
+        # If it quacks like a duck
+        try:
+            return mode(self)
+        except:
+            pass
+
+        if mode == 'test':
             # Example of conditional. Used to test subequent imaging
             if '100' in self.uv:
                 return False
@@ -292,6 +298,69 @@ def dask_reduce(arr):
     """
     return arr
 
+# ------------------------------------------------------------------------------------
+def sc_round_1(s):
+    """Logic for the first round of selfcalibration
+    
+    Arguments:
+        s {uv} -- An instance of the uv-class. 
+    """
+    from astropy.io import fits as pyfits
+    restor = s.img_tasks['restor']
+    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+                "region='images(1,1)'").run()
+    data = pyfits.open(fits.out)[0].data.squeeze()
+    delete_miriad(fits.out)
+
+    # Threshold selected by dumb luck and subsequet experimentation
+    restor_max = data.max()
+    if restor_max > 50*s.img_tasks['stokes_v_rms']:
+        return True, {'interval':'0.5'}
+    else:
+        return False
+
+def sc_round_2(s):
+    """Logic for the first round of selfcalibration
+    
+    Arguments:
+        s {uv} -- An instance of the uv-class. 
+    """
+    from astropy.io import fits as pyfits
+    restor = s.img_tasks['restor']
+    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+                "region='images(1,1)'").run()
+    data = pyfits.open(fits.out)[0].data.squeeze()
+    delete_miriad(fits.out)
+
+    # Threshold selected by dumb luck and subsequet experimentation
+    restor_max = data.max()
+    if restor_max > 50*s.img_tasks['stokes_v_rms']:
+        return True
+    else:
+        return False
+
+def sc_round_3(s):
+    """Logic for the first round of selfcalibration
+    
+    Arguments:
+        s {uv} -- An instance of the uv-class. 
+    """
+    from astropy.io import fits as pyfits
+    restor = s.img_tasks['restor']
+    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+                "region='images(1,1)'").run()
+    data = pyfits.open(fits.out)[0].data.squeeze()
+    delete_miriad(fits.out)
+
+    # Threshold selected by dumb luck and subsequet experimentation
+    restor_max = data.max()
+    if restor_max > 150*s.img_tasks['stokes_v_rms']:
+        return True, {'options':'mfs,amp', 'interval':'0.5'}
+    else:
+        return False
+
+
+# ------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
     files = [ 'c3171_95.uv', 'c3171_96.uv',  'c3171_97.uv',  'c3171_98.uv',
@@ -312,18 +381,30 @@ if __name__ == '__main__':
                     f = f"{test}.{c}.{i}"
                 delete_miriad(f)
 
+    linmos_imgs = []
 
     # Example code to get to run with Dask framework
     imgs = [run_image(f, invert_kwargs={'imsize':'4,4,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
+    linmos_imgs.append(e1)
 
-    self_imgs = [run_selfcal(uv,1, mode='restor_max') for uv in imgs]
-    # self_imgs = [run_selfcal(uv,1, mode='clean_sum') for uv in imgs]
+    self_imgs = [run_selfcal(uv, 1, mode=sc_round_1) for uv in imgs]
     self_imgs = [run_image(uv) for uv in self_imgs]
     e2 = run_linmos(self_imgs, 1)
+    linmos_imgs.append(e2)
 
-    dask_reduce([e1, e2]).visualize('graph.png')
-    dask_reduce([e1, e2]).compute()
+    self_imgs1 = [run_selfcal(uv, 2, mode=sc_round_2) for uv in self_imgs]
+    self_imgs1 = [run_image(uv) for uv in self_imgs1]
+    e3 = run_linmos(self_imgs1, 2)
+    linmos_imgs.append(e3)
+
+    self_imgs2 = [run_selfcal(uv, 3, mode=sc_round_3) for uv in self_imgs1]
+    self_imgs2 = [run_image(uv) for uv in self_imgs2]
+    e4 = run_linmos(self_imgs1, 3)
+    linmos_imgs.append(e4)
+
+    dask_reduce(linmos_imgs).visualize('graph.png')
+    dask_reduce(linmos_imgs).compute()
 
     # import pickle
     # print(pickle.dumps(c100))
