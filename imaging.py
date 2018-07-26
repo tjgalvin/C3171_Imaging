@@ -320,7 +320,7 @@ def sc_round_1(s):
         return False
 
 def sc_round_2(s):
-    """Logic for the first round of selfcalibration
+    """Logic for the second round of selfcalibration
     
     Arguments:
         s {uv} -- An instance of the uv-class. 
@@ -340,7 +340,7 @@ def sc_round_2(s):
         return False
 
 def sc_round_3(s):
-    """Logic for the first round of selfcalibration
+    """Logic for the third round of selfcalibration
     
     Arguments:
         s {uv} -- An instance of the uv-class. 
