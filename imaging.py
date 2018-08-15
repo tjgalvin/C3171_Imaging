@@ -77,14 +77,13 @@ class uv():
         if 'restor' in self.img_tasks.keys():
             return
 
-        print(self.uv)
-        invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic " \
-                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=3,3,beam " \
+        invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic,systemp " \
+                   f"offset=3:32:22.0,-27:48:37 stokes=i imsize=5,5,beam " \
                    f"map={self.uv}.map beam={self.uv}.beam robust=2 cell=0.35", 
                     over=invert_kwargs).run()
         print(invert)
 
-        stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic " \
+        stokes_v =  m(f"invert vis={self.uv} imsize=3,3,beam options=mfs,sdb,double,mosaic,systemp " \
                       f"offset=3:32:22.0,-27:48:37 stokes=v " \
                       f"map={self.uv}.v.map cell=0.35").run()
         print(stokes_v)
@@ -193,12 +192,13 @@ class uv():
         return True
 
 
-    def selfcal(self, *args, round: int=0, self_kwargs: dict=None, **kwargs):
+    def selfcal(self, *args, round: int=0, self_kwargs: dict=None, preprocess=None, **kwargs):
         """Apply a round of selfcalibration to the uv-file if appropriate.
         
         Keyword Arguments:
             round {int} -- The selfcalibration round the process is up to (default: {0})
             self_kwargs {dict} -- Options for selfcalibration. Can be overwritten by attempt_selfcal returns (default: {None})
+            preprocess {callable} -- callable to accept an instance of uv-file before selfcalibration (default: {None})
         """
         run_self = self.attempt_selfcal(**kwargs)
         
@@ -212,6 +212,10 @@ class uv():
         # Apply calibration tables in existing uv-file
         uvaver = m(f"uvaver vis={self.uv} out={self.uv}.{round}").run()
         print(uvaver)
+
+        # Action any described todos
+        if preprocess is not None:
+            preprocess(uvaver.out)
 
         # Derive selfcalibrated solutions
         # TODO: Discuss changes to interval and nfbins, especially with two IFS
@@ -353,13 +357,19 @@ def sc_round_3(s):
     data = pyfits.open(fits.out)[0].data.squeeze()
     delete_miriad(fits.out)
 
-    # Threshold selected by dumb luck and subsequet experimentation
+    # Threshold selected by experimentation (does it look bad?)
     restor_max = data.max()
-    if restor_max > 150*s.img_tasks['stokes_v_rms']:
-        return True, {'options':'mfs,amp', 'interval':'0.5'}
+    if restor_max > 500*s.img_tasks['stokes_v_rms']:
+        return True, {'options':'mfs,amp', 'interval':'1'}
     else:
         return False
 
+
+def seeing_flag(s):
+        """Flag uvdata based on the smonrms statistic
+        """
+        uvflag = m(f"uvflag vis={s} select=-seeing(500) flagval=flag").run()
+        print(uvflag)
 
 # ------------------------------------------------------------------------------------
 
@@ -399,13 +409,16 @@ if __name__ == '__main__':
     e3 = run_linmos(self_imgs1, 2)
     linmos_imgs.append(e3)
 
-    self_imgs2 = [run_selfcal(uv, 3, mode=sc_round_3) for uv in self_imgs1]
+    self_imgs2 = [run_selfcal(uv, 3, mode=sc_round_3, preprocess=seeing_flag) for uv in self_imgs1]
     self_imgs2 = [run_image(uv) for uv in self_imgs2]
     e4 = run_linmos(self_imgs2, 3)
     linmos_imgs.append(e4)
 
-    dask_reduce(linmos_imgs).visualize('graph.png')
-    dask_reduce(linmos_imgs).compute(num_works=10)
+    # Make a figure of the jobs and their relationships to one another
+    # dask_reduce(linmos_imgs).visualize('graph.png')
+
+    # Run the pipeline
+    dask_reduce(linmos_imgs).compute(num_workers=10)
 
     # import pickle
     # print(pickle.dumps(c100))
