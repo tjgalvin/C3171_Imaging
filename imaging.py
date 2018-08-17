@@ -192,13 +192,15 @@ class uv():
         return True
 
 
-    def selfcal(self, *args, round: int=0, self_kwargs: dict=None, preprocess=None, **kwargs):
+    def selfcal(self, *args, round: int=0, self_kwargs: dict=None, preprocess=None, postprocess=None,
+                      **kwargs):
         """Apply a round of selfcalibration to the uv-file if appropriate.
         
         Keyword Arguments:
             round {int} -- The selfcalibration round the process is up to (default: {0})
             self_kwargs {dict} -- Options for selfcalibration. Can be overwritten by attempt_selfcal returns (default: {None})
             preprocess {callable} -- callable to accept an instance of uv-file before selfcalibration (default: {None})
+            postprocess {callable} -- callable to accept an instance of uv-file after selfcalibration (default: {None})
         """
         run_self = self.attempt_selfcal(**kwargs)
         
@@ -218,11 +220,13 @@ class uv():
             preprocess(uvaver.out)
 
         # Derive selfcalibrated solutions
-        # TODO: Discuss changes to interval and nfbins, especially with two IFS
-        # TODO: in the uvcat'ed uvfiles. 
         selfcal = m(f"selfcal vis={uvaver.out} model={self.img_tasks['mfclean'].out} "\
                     f"options=mfs,phase interval=0.1 nfbin=4", over=self_kwargs).run()
         print(selfcal)
+
+        # Action any described todos
+        if postprocess is not None:
+            postprocess(uvaver.out)
 
         # Return new instance to selfcaled file
         return uv(uvaver.out)
@@ -266,7 +270,7 @@ def run_linmos(mos: list, round: int=0):
 
 
 @dask.delayed
-def run_image(s: str, invert_kwargs: dict= None):
+def run_image(s: str, invert_kwargs: dict=None):
     """Function to Dask-ify for distribution
     
     Arguments:
@@ -279,7 +283,7 @@ def run_image(s: str, invert_kwargs: dict= None):
         point = s
 
     point.image(invert_kwargs=invert_kwargs)
-    point.convol(7., 3., 2.2)    
+    point.convol(7.5, 3.5, 2.2)    
 
     return point
 
@@ -312,7 +316,7 @@ def sc_round_1(s):
     """
     from astropy.io import fits as pyfits
     restor = s.img_tasks['restor']
-    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+    fits = m(f"fits in={restor.out} out={restor.out}.1.fits op=xyout " \
                 "region='images(1,1)'").run()
     data = pyfits.open(fits.out)[0].data.squeeze()
     delete_miriad(fits.out)
@@ -332,7 +336,7 @@ def sc_round_2(s):
     """
     from astropy.io import fits as pyfits
     restor = s.img_tasks['restor']
-    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+    fits = m(f"fits in={restor.out} out={restor.out}.2.fits op=xyout " \
                 "region='images(1,1)'").run()
     data = pyfits.open(fits.out)[0].data.squeeze()
     delete_miriad(fits.out)
@@ -352,7 +356,7 @@ def sc_round_3(s):
     """
     from astropy.io import fits as pyfits
     restor = s.img_tasks['restor']
-    fits = m(f"fits in={restor.out} out={restor.out}.fits op=xyout " \
+    fits = m(f"fits in={restor.out} out={restor.out}.3.fits op=xyout " \
                 "region='images(1,1)'").run()
     data = pyfits.open(fits.out)[0].data.squeeze()
     delete_miriad(fits.out)
@@ -364,12 +368,48 @@ def sc_round_3(s):
     else:
         return False
 
+def sc_round_4(s):
+    """Logic for the four round of selfcalibration
+    
+    Arguments:
+        s {uv} -- An instance of the uv-class. 
+    """
+    from astropy.io import fits as pyfits
+    restor = s.img_tasks['restor']
+    fits = m(f"fits in={restor.out} out={restor.out}.4.fits op=xyout " \
+                "region='images(1,1)'").run()
+    data = pyfits.open(fits.out)[0].data.squeeze()
+    delete_miriad(fits.out)
+
+    # Threshold selected by experimentation (does it look bad?)
+    restor_max = data.max()
+    if restor_max > 400*s.img_tasks['stokes_v_rms']:
+        return True, {'options':'mfs,amp', 'interval':'1'}
+    else:
+        return False
+
 
 def seeing_flag(s):
         """Flag uvdata based on the smonrms statistic
         """
         uvflag = m(f"uvflag vis={s} select=-seeing(500) flagval=flag").run()
         print(uvflag)
+
+
+def pgflag_flag(s):
+        """Flag uvdata based on the smonrms statistic
+        
+        s {str} -- Path to the filename to flag
+        """
+        # Automated flagging
+        pgflag = m(f"pgflag vis={s} command='<b' stokes=i,q,u,v flagpar=8,5,0,3,6,3 options=nodisp").run()
+        print(pgflag)
+
+        pgflag = m(f"pgflag vis={s} command='<b' stokes=i,v,q,u flagpar=8,2,0,3,6,3  options=nodisp").run()
+        print(pgflag)
+
+        pgflag = m(f"pgflag vis={s} command='<b' stokes=i,v,u,q flagpar=8,2,0,3,6,3  options=nodisp").run()
+        print(pgflag)
 
 # ------------------------------------------------------------------------------------
 
@@ -395,7 +435,7 @@ if __name__ == '__main__':
     linmos_imgs = []
 
     # Example code to get to run with Dask framework
-    imgs = [run_image(f, invert_kwargs={'imsize':'4,4,beam'}) for f in files]
+    imgs = [run_image(f, invert_kwargs={'imsize':'5,5,beam'}) for f in files]
     e1 = run_linmos(imgs, 0)
     linmos_imgs.append(e1)
 
@@ -414,11 +454,16 @@ if __name__ == '__main__':
     e4 = run_linmos(self_imgs2, 3)
     linmos_imgs.append(e4)
 
+    self_imgs3 = [run_selfcal(uv, 4, mode=sc_round_4, preprocess=seeing_flag, postprocess=pgflag_flag) for uv in self_imgs2]
+    self_imgs3 = [run_image(uv) for uv in self_imgs3]
+    e5 = run_linmos(self_imgs3, 4)
+    linmos_imgs.append(e5)
+
     # Make a figure of the jobs and their relationships to one another
-    # dask_reduce(linmos_imgs).visualize('graph.png')
+    # dask_reduce(linmoss_imgs).visualize('graph.png')
 
     # Run the pipeline
-    dask_reduce(linmos_imgs).compute(num_workers=10)
+    dask_reduce(linmos_imgs).compute(num_workers=11)
 
     # import pickle
     # print(pickle.dumps(c100))
