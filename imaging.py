@@ -66,11 +66,13 @@ class uv():
         return src_data
 
 
-    def image(self, invert_kwargs: dict=None):
+    def image(self, invert_kwargs: dict=None, cut_thres_1: {float}=5, cut_thres_2: {float}=None):
         """A simple MFCLEAN imaging pipeline
         
         Keyword Arguments:
             invert_kwargs {dict} -- Options to pass to the invert map/beam stage (default: {None})
+            cut_thres_1 {float} -- First cutoff option provided to mfclean, depth to clean to (default: {5})
+            invert_kwargs {dict} -- Second option provided to mfclean if not None, depth to clean existing components down to (default: {None})
         """
 
         # No work to do, as data has been imaged
@@ -94,37 +96,46 @@ class uv():
             if 'Estimated rms' in l:
                 v_rms = float(l.split()[-1])
 
+        cutoff = f"{cut_thres_1*v_rms},{cut_thres_2*v_rms}" if cut_thres_2 is not None else f"{cut_thres_1*v_rms}"
+
         mfclean = m(f"mfclean map={invert.map} beam={invert.beam} out={self.uv}.clean "\
-                    f"region='perc(66)' niters=1500 cutoff={5*v_rms}").run()
+                    f"region='perc(66)' niters=1500 cutoff={cutoff}").run()
         print(mfclean)
 
         restor = m(f"restor map={invert.map} beam={invert.beam} model={mfclean.out} "\
                    f"options=mfs out={self.uv}.restor").run()
         print(restor)
 
+        residual = m(f"restor map={invert.map} beam={invert.beam} model={mfclean.out} "\
+                     f"mode=residual out={self.uv}.residual").run()
+        print(residual)
+
         self.img_tasks = {'invert':invert, 'invert_v':stokes_v, 'mfclean':mfclean,
-                          'restor':restor, 'stokes_v_rms':v_rms}
+                          'restor':restor, 'residual':residual, 
+                          'stokes_v_rms':v_rms}
 
 
-    def convol(self, bmaj: float, bmin: float, pa: float):
+    def convol(self, bmaj: float, bmin: float, pa: float, mode: str='restor'):
         """Convol a restored image to a different resolution
         
         Arguments:
             bmaj {float} -- Beam major in arcseconds
             bmin {float} -- Beam minor in arcseconds
             pa {float} -- Beam position angle in degrees
+            mode {str} -- The mode to convol (default: {restor})
         """
 
-        if 'restor' not in self.img_tasks.keys() or \
-                    'convol' in self.img_tasks.keys():
+        if mode not in self.img_tasks.keys() or \
+                    f'convol_{mode}' in self.img_tasks.keys():
             return None
 
-        restor = self.img_tasks['restor']
-        convol = m(f"convol map={restor.out} out={self.uv}.convol fwhm={bmaj},{bmin} "
+        restor = self.img_tasks[mode]
+        print(restor.out)
+        convol = m(f"convol map={restor.out} out={self.uv}.{mode}.convol fwhm={bmaj},{bmin} "\
                    f"pa={pa} options=final").run()
         print(convol)
 
-        self.img_tasks['convol'] = convol
+        self.img_tasks[f'convol_{mode}'] = convol
 
 
     def attempt_selfcal(self, mode: str=None):
@@ -247,19 +258,20 @@ def delete_miriad(f:str):
             os.remove(f)
 
 @dask.delayed
-def run_linmos(mos: list, round: int=0):
+def run_linmos(mos: list, round: int=0, mode: str='restor'):
     """The the miriad task linmos agaisnt list of uv files
     
     Arguments:
         mos {list} -- A list of uv-instances
         round {int} -- A int for self calibration round
+        mode {str} -- The mode to linmos together
     """
-    convol_files = f'temp_file_{round}.dat'
+    convol_files = f'temp_file_{round}.{mode}.dat'
     with open(f"{convol_files}", 'w') as f:
         for i in mos:
-            print(f"{i.img_tasks['convol'].out}", file=f)
+            print(f"{i.img_tasks[f'convol_{mode}'].out}", file=f)
 
-    out = f"all_days.{round}.linmos"
+    out = f"all_days.{round}.{mode}.linmos"
     delete_miriad(out)
     linmos = m(f"linmos in=@{convol_files} bw=4.096 out={out}").run()
     print(linmos)
@@ -270,7 +282,7 @@ def run_linmos(mos: list, round: int=0):
 
 
 @dask.delayed
-def run_image(s: str, invert_kwargs: dict=None):
+def run_image(s: str, *args, invert_kwargs: dict=None, **kwargs):
     """Function to Dask-ify for distribution
     
     Arguments:
@@ -282,8 +294,9 @@ def run_image(s: str, invert_kwargs: dict=None):
     else:
         point = s
 
-    point.image(invert_kwargs=invert_kwargs)
+    point.image(invert_kwargs=invert_kwargs, **kwargs)
     point.convol(7.5, 3.5, 2.2)    
+    point.convol(7.5, 3.5, 2.2, mode='residual')    
 
     return point
 
@@ -324,7 +337,7 @@ def sc_round_1(s):
     # Threshold selected by dumb luck and subsequet experimentation
     restor_max = data.max()
     if restor_max > 50*s.img_tasks['stokes_v_rms']:
-        return True, {'interval':'0.5'}
+        return True, {'interval':'1.'}
     else:
         return False
 
@@ -344,7 +357,7 @@ def sc_round_2(s):
     # Threshold selected by dumb luck and subsequet experimentation
     restor_max = data.max()
     if restor_max > 50*s.img_tasks['stokes_v_rms']:
-        return True
+        return True, {'interval':'1'}
     else:
         return False
 
@@ -363,7 +376,7 @@ def sc_round_3(s):
 
     # Threshold selected by experimentation (does it look bad?)
     restor_max = data.max()
-    if restor_max > 500*s.img_tasks['stokes_v_rms']:
+    if restor_max > 400*s.img_tasks['stokes_v_rms']:
         return True, {'options':'mfs,amp', 'interval':'1'}
     else:
         return False
@@ -435,29 +448,39 @@ if __name__ == '__main__':
     linmos_imgs = []
 
     # Example code to get to run with Dask framework
-    imgs = [run_image(f, invert_kwargs={'imsize':'5,5,beam'}) for f in files]
+    imgs = [run_image(f, cut_thres_1=15, cut_thres_2=10) for f in files]
     e1 = run_linmos(imgs, 0)
+    r1 = run_linmos(imgs, 0, mode='residual')
     linmos_imgs.append(e1)
+    linmos_imgs.append(r1)
 
     self_imgs = [run_selfcal(uv, 1, mode=sc_round_1) for uv in imgs]
-    self_imgs = [run_image(uv) for uv in self_imgs]
+    self_imgs = [run_image(uv, cut_thres_1=15, cut_thres_2=10) for uv in self_imgs]
     e2 = run_linmos(self_imgs, 1)
+    r2 = run_linmos(self_imgs, 1,mode='residual')
     linmos_imgs.append(e2)
+    linmos_imgs.append(r2)
 
     self_imgs1 = [run_selfcal(uv, 2, mode=sc_round_2) for uv in self_imgs]
-    self_imgs1 = [run_image(uv) for uv in self_imgs1]
+    self_imgs1 = [run_image(uv, cut_thres_1=10, cut_thres_2=3) for uv in self_imgs1]
     e3 = run_linmos(self_imgs1, 2)
+    r3 = run_linmos(self_imgs1, 2, mode='residual')
     linmos_imgs.append(e3)
+    linmos_imgs.append(r3)
 
     self_imgs2 = [run_selfcal(uv, 3, mode=sc_round_3, preprocess=seeing_flag) for uv in self_imgs1]
-    self_imgs2 = [run_image(uv) for uv in self_imgs2]
+    self_imgs2 = [run_image(uv, cut_thres_1=5, cut_thres_2=2) for uv in self_imgs2]
     e4 = run_linmos(self_imgs2, 3)
+    r4 = run_linmos(self_imgs2, 3, mode='residual')
     linmos_imgs.append(e4)
+    linmos_imgs.append(r4)
 
-    self_imgs3 = [run_selfcal(uv, 4, mode=sc_round_4, preprocess=seeing_flag, postprocess=pgflag_flag) for uv in self_imgs2]
-    self_imgs3 = [run_image(uv) for uv in self_imgs3]
-    e5 = run_linmos(self_imgs3, 4)
-    linmos_imgs.append(e5)
+
+    # Disabling the second round of selfcalibration
+    # self_imgs3 = [run_selfcal(uv, 4, mode=sc_round_4, preprocess=seeing_flag, postprocess=pgflag_flag) for uv in self_imgs2]
+    # self_imgs3 = [run_image(uv) for uv in self_imgs3]
+    # e5 = run_linmos(self_imgs3, 4)
+    # linmos_imgs.append(e5)
 
     # Make a figure of the jobs and their relationships to one another
     # dask_reduce(linmoss_imgs).visualize('graph.png')
