@@ -81,7 +81,7 @@ class uv():
 
         invert = m(f"invert vis={self.uv} options=mfs,sdb,double,mosaic,systemp " \
                    f"offset=3:32:22.0,-27:48:37 stokes=i imsize=5,5,beam " \
-                   f"map={self.uv}.map beam={self.uv}.beam robust=2 cell=0.35", 
+                   f"map={self.uv}.map beam={self.uv}.beam robust=1 cell=0.25", 
                     over=invert_kwargs).run()
         print(invert)
 
